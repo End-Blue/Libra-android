@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Permite HTTPS a la API del diccionario -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.dictionaryapi.dev</domain>
+    </domain-config>
+</network-security-config>
