@@ -1,14 +1,11 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.libra.reader
 
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.view.GestureDetector
-import android.view.MotionEvent
 import android.os.ParcelFileDescriptor
-import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -49,7 +46,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipFile
-import kotlin.math.abs
+import kotlin.math.absoluteValue
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PANTALLA PRINCIPAL DEL LECTOR
@@ -61,31 +58,50 @@ fun ReaderScreen(
     onClose: () -> Unit,
     onSave: (Long, Int) -> Unit,
     highlightDao: HighlightDao,
-    onUpdateItem: (LibraryItem) -> Unit
+    onUpdateItem: (LibraryItem) -> Unit   // para guardar readingMode, bookmarkStyle
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
     BackHandler(onBack = onClose)
 
+    var showMenu by remember { mutableStateOf(false) }
     var showHighlights by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+
     val highlights by highlightDao.observeByBook(item.id).collectAsState(initial = emptyList())
     var editingHighlight by remember { mutableStateOf<Highlight?>(null) }
 
-    Column(Modifier.fillMaxSize().background(Ink).systemBarsPadding()) {
-        // Barra superior
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Ink)
+            .systemBarsPadding()
+    ) {
+        // ── Barra superior ────────────────────────────────────────────────────
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onClose) { Text("‹ Volver", color = Gold) }
-            Text(item.title, color = Cream, fontSize = 13.sp,
+            Text(
+                item.title, color = Cream, fontSize = 13.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f))
-            TextButton(onClick = { showHighlights = true }) { Text("📝", fontSize = 18.sp) }
-            TextButton(onClick = { showSettings = true }) { Text("⚙", color = Muted, fontSize = 18.sp) }
+                modifier = Modifier.weight(1f)
+            )
+            // Botón notas del libro
+            TextButton(onClick = { showHighlights = true }) {
+                Text("📝", fontSize = 18.sp)
+            }
+            // Botón ajustes del lector
+            TextButton(onClick = { showSettings = true }) {
+                Text("⚙", color = Muted, fontSize = 18.sp)
+            }
         }
 
-        // Contenido
+        // ── Contenido del lector ──────────────────────────────────────────────
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (item.format.lowercase()) {
                 "epub" -> EpubReader(item, onSave, highlightDao, onUpdateItem)
@@ -93,91 +109,169 @@ fun ReaderScreen(
                 "txt"  -> TextFileReader(item, onSave, fb2 = false, highlightDao, onUpdateItem)
                 "fb2"  -> TextFileReader(item, onSave, fb2 = true,  highlightDao, onUpdateItem)
                 "cbz"  -> CbzReader(item, onSave, item.readingMode)
-                else   -> Message("Los archivos CBR (RAR) no se pueden leer. Conviértelo a CBZ.")
+                else   -> Message(
+                    "Los archivos CBR (RAR) todavía no se pueden leer dentro de Libra. " +
+                    "Conviértelo a CBZ y vuelve a importarlo."
+                )
             }
         }
 
-        // Separador de página
-        if (item.bookmarkStyle.isNotBlank()) BookmarkDivider(item)
+        // ── Separador de página (bookmark visual) ─────────────────────────────
+        if (item.bookmarkStyle.isNotBlank()) {
+            BookmarkDivider(item)
+        }
     }
 
+    // ── Hoja de notas del libro ───────────────────────────────────────────────
     if (showHighlights) {
-        ModalBottomSheet(onDismissRequest = { showHighlights = false }, containerColor = Panel) {
+        ModalBottomSheet(
+            onDismissRequest = { showHighlights = false },
+            containerColor = Panel
+        ) {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
-                Text("NOTAS DE ESTE LIBRO", color = Gold, fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text(
+                    "NOTAS DE ESTE LIBRO",
+                    color = Gold, fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+                )
                 Spacer(Modifier.height(12.dp))
-                BookHighlightsScreen(highlights = highlights,
+                BookHighlightsScreen(
+                    highlights = highlights,
                     onEdit = { editingHighlight = it },
-                    onDelete = { h -> scope.launch { highlightDao.deleteById(h.id) } })
+                    onDelete = { h -> scope.launch { highlightDao.deleteById(h.id) } }
+                )
             }
         }
     }
 
+    // ── Hoja de ajustes del lector ────────────────────────────────────────────
     if (showSettings) {
-        ReaderSettingsSheet(item = item, onDismiss = { showSettings = false },
-            onUpdateItem = onUpdateItem)
+        ReaderSettingsSheet(
+            item = item,
+            onDismiss = { showSettings = false },
+            onUpdateItem = onUpdateItem
+        )
     }
 
+    // ── Diálogo de edición de nota ────────────────────────────────────────────
     editingHighlight?.let { h ->
         HighlightEditDialog(
             highlight = h,
-            onSave = { updated -> scope.launch { highlightDao.update(updated) }; editingHighlight = null },
+            onSave = { updated ->
+                scope.launch { highlightDao.update(updated) }
+                editingHighlight = null
+            },
             onDismiss = { editingHighlight = null }
         )
     }
 }
 
+// ── Ajustes del lector ────────────────────────────────────────────────────────
+
 @Composable
-fun ReaderSettingsSheet(item: LibraryItem, onDismiss: () -> Unit, onUpdateItem: (LibraryItem) -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Panel) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 36.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("AJUSTES DEL LECTOR", color = Gold, fontSize = 13.sp,
-                fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+fun ReaderSettingsSheet(
+    item: LibraryItem,
+    onDismiss: () -> Unit,
+    onUpdateItem: (LibraryItem) -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Panel
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 36.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                "AJUSTES DEL LECTOR",
+                color = Gold, fontSize = 13.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+            )
+
+            // Modo de lectura
             Text("Modo de paso de página", color = Cream, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                listOf("VERTICAL" to "↕ Scroll", "HORIZONTAL" to "↔ Pasar hoja").forEach { (mode, label) ->
-                    FilterChip(selected = item.readingMode == mode,
+                listOf("VERTICAL" to "↕ Scroll vertical", "HORIZONTAL" to "↔ Pasar hoja").forEach { (mode, label) ->
+                    FilterChip(
+                        selected = item.readingMode == mode,
                         onClick = { onUpdateItem(item.copy(readingMode = mode)) },
                         label = { Text(label) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Gold, selectedLabelColor = Ink, labelColor = Cream))
+                            selectedContainerColor = Gold,
+                            selectedLabelColor = Ink,
+                            labelColor = Cream
+                        )
+                    )
                 }
             }
+
             HorizontalDivider(color = Ink)
+
+            // Separador de página
             Text("Separador de página", color = Cream, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text("Aparece al final del lector para recordar dónde lo dejaste.", color = Muted, fontSize = 12.sp)
+            Text(
+                "Aparece al final del lector para recordar dónde lo dejaste.",
+                color = Muted, fontSize = 12.sp
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                listOf("" to "🚫 Ninguno", "COVER" to "📖 Portada", "RIBBON" to "🎀 Cinta")
-                    .forEach { (style, label) ->
-                        FilterChip(selected = item.bookmarkStyle == style,
-                            onClick = { onUpdateItem(item.copy(bookmarkStyle = style)) },
-                            label = { Text(label) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Gold, selectedLabelColor = Ink, labelColor = Cream))
-                    }
+                listOf(
+                    "" to "🚫 Ninguno",
+                    "COVER" to "📖 Portada",
+                    "RIBBON" to "🎀 Cinta"
+                ).forEach { (style, label) ->
+                    FilterChip(
+                        selected = item.bookmarkStyle == style,
+                        onClick = { onUpdateItem(item.copy(bookmarkStyle = style)) },
+                        label = { Text(label) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Gold,
+                            selectedLabelColor = Ink,
+                            labelColor = Cream
+                        )
+                    )
+                }
             }
         }
     }
 }
 
+// ── Separador visual de página ─────────────────────────────────────────────────
+
 @Composable
 fun BookmarkDivider(item: LibraryItem) {
     when (item.bookmarkStyle) {
-        "COVER" -> Row(
-            Modifier.fillMaxWidth().height(48.dp).background(Panel).padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            BookCover(item, Modifier.size(width = 25.dp, height = 36.dp))
-            Spacer(Modifier.width(10.dp))
-            Text("Continuarás aquí", color = Muted, fontSize = 12.sp)
-            Spacer(Modifier.weight(1f))
-            Text("🔖", fontSize = 18.sp)
+        "COVER" -> {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .background(Panel)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BookCover(item, Modifier.size(width = 25.dp, height = 36.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Continuarás aquí", color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.weight(1f))
+                Text("🔖", fontSize = 18.sp)
+            }
         }
-        "RIBBON" -> Box(Modifier.fillMaxWidth().height(6.dp).background(Gold))
+        "RIBBON" -> {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .background(Gold)
+            )
+        }
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HELPERS COMUNES
+// ══════════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun Message(text: String) {
@@ -186,31 +280,30 @@ private fun Message(text: String) {
     }
 }
 
+/** Animación de paso de página horizontal (efecto slide + fade) */
 @Composable
-private fun Modifier.pageSwipe(onNext: () -> Unit, onPrev: () -> Unit): Modifier {
-    val next by rememberUpdatedState(onNext)
-    val prev by rememberUpdatedState(onPrev)
-    return pointerInput(Unit) {
-        var total = 0f
-        detectHorizontalDragGestures(
-            onDragStart = { total = 0f },
-            onDragEnd = { if (total < -80f) next() else if (total > 80f) prev() },
-            onDragCancel = { total = 0f }
-        ) { _, amount -> total += amount }
-    }
-}
-
-@Composable
-private fun <T> PagedContent(state: T, goingForward: Boolean, modifier: Modifier = Modifier,
-    content: @Composable (T) -> Unit) {
-    AnimatedContent(targetState = state,
+private fun <T> PagedContent(
+    state: T,
+    goingForward: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable (T) -> Unit
+) {
+    AnimatedContent(
+        targetState = state,
         transitionSpec = {
-            if (goingForward)
-                (slideInHorizontally { it } + fadeIn(tween(220))).togetherWith(slideOutHorizontally { -it } + fadeOut(tween(220)))
-            else
-                (slideInHorizontally { -it } + fadeIn(tween(220))).togetherWith(slideOutHorizontally { it } + fadeOut(tween(220)))
+            if (goingForward) {
+                (slideInHorizontally { it } + fadeIn(tween(220))).togetherWith(
+                    slideOutHorizontally { -it } + fadeOut(tween(220))
+                )
+            } else {
+                (slideInHorizontally { -it } + fadeIn(tween(220))).togetherWith(
+                    slideOutHorizontally { it } + fadeOut(tween(220))
+                )
+            }
         },
-        label = "page_anim", modifier = modifier) { s -> content(s) }
+        label = "page_anim",
+        modifier = modifier
+    ) { s -> content(s) }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -225,94 +318,48 @@ private fun chapterUrl(path: String): String =
     Uri.Builder().scheme("https").authority(EPUB_HOST)
         .encodedPath("/" + Uri.encode(path, "/")).build().toString()
 
-/** Convierte un colorArgb Long a cadena CSS hex (#rrggbb) */
-private fun Long.toCssHex(): String {
-    val r = ((this shr 16) and 0xFF).toInt()
-    val g = ((this shr 8) and 0xFF).toInt()
-    val b = (this and 0xFF).toInt()
-    return "#%02x%02x%02x".format(r, g, b)
-}
-
-/**
- * CSS base del lector + reglas de subrayado para los highlights guardados.
- * Cada highlight se inyecta como un atributo data-libra-id en el span y se
- * colorea con una clase generada dinámicamente.
- */
-private fun styleFor(mode: Int, highlights: List<Highlight>): String {
+private fun styleFor(mode: Int): String {
     val (bg, fg, link) = when (mode) {
         1 -> Triple("#F4ECD8", "#3B2F1E", "#8A5A1F")
         2 -> Triple("#FFFFFF", "#111111", "#1A5FB4")
         else -> Triple("#171716", "#F1E8D8", "#C5A46D")
     }
-    // Genera una clase CSS por color de highlight
-    val highlightCss = highlights
-        .map { it.colorArgb }
-        .distinct()
-        .joinToString("\n") { argb ->
-            val css = argb.toCssHex()
-            ".libra-hl-${argb.toString(16)} { background-color: ${css}99 !important; border-radius: 3px; }"
-        }
-    return """
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-        html,body{background:$bg !important;color:$fg !important;}
-        body{padding:14px 18px !important;line-height:1.6 !important;margin:0 !important;}
-        a{color:$link !important;}img,svg{max-width:100% !important;height:auto !important;}
-        p,div,span,li,h1,h2,h3,h4{color:$fg !important;}
-        *{-webkit-user-select:text !important;user-select:text !important;}
-        .libra-hl{border-radius:3px;}
-        $highlightCss
-        </style>
-    """.trimIndent()
+    return "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+        "<style>html,body{background:$bg !important;color:$fg !important;}" +
+        "body{padding:14px 18px !important;line-height:1.6 !important;margin:0 !important;}" +
+        "a{color:$link !important;}img,svg{max-width:100% !important;height:auto !important;}" +
+        "p,div,span,li,h1,h2,h3,h4{color:$fg !important;}" +
+        // Permite selección de texto para el subrayado
+        "* { -webkit-user-select: text !important; user-select: text !important; }" +
+        "</style>"
 }
 
-private val SCRIPT_REGEX = Regex("<script[\\s\\S]*?</script\\s*>", RegexOption.IGNORE_CASE)
-
-private fun injectStyle(rawHtml: String, mode: Int, highlights: List<Highlight>): String {
-    val html = SCRIPT_REGEX.replace(rawHtml, "")
-    val style = styleFor(mode, highlights)
+private fun injectStyle(html: String, mode: Int): String {
+    val style = styleFor(mode)
     val index = html.indexOf("</head>", ignoreCase = true)
     return if (index >= 0) html.substring(0, index) + style + html.substring(index) else style + html
-}
-
-/**
- * Pinta los subrayados guardados sobre el texto del capítulo buscando
- * las cadenas exactas e insertando spans coloreados.
- * Trabaja solo con el BODY para no romper la estructura del HTML.
- */
-private fun paintHighlights(html: String, highlights: List<Highlight>): String {
-    if (highlights.isEmpty()) return html
-    var result = html
-    highlights.forEach { h ->
-        val escaped = h.selectedText
-            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        val colorClass = "libra-hl-${h.colorArgb.toString(16)}"
-        val span = """<span class="libra-hl $colorClass" data-libra-id="${h.id}">$escaped</span>"""
-        result = result.replace(escaped, span, ignoreCase = false)
-    }
-    return result
 }
 
 private fun emptyResponse(status: Int, reason: String) =
     WebResourceResponse("text/plain", "utf-8", status, reason, emptyMap(),
         ByteArrayInputStream(ByteArray(0)))
 
-private fun serveEpub(pkg: EpubPackage, theme: EpubTheme, uri: Uri,
-    chapterHighlights: List<Highlight>): WebResourceResponse {
+private fun serveEpub(pkg: EpubPackage, theme: EpubTheme, uri: Uri): WebResourceResponse {
     if (uri.host != EPUB_HOST) return emptyResponse(403, "Blocked")
     return try {
         val path = uri.path?.removePrefix("/") ?: return emptyResponse(404, "Not found")
         val bytes = pkg.readBytes(path) ?: return emptyResponse(404, "Not found")
         val mime = pkg.mimeOf(path)
         if (mime.contains("html")) {
-            var styled = injectStyle(String(bytes, Charsets.UTF_8), theme.mode, chapterHighlights)
-            styled = paintHighlights(styled, chapterHighlights)
+            val styled = injectStyle(String(bytes, Charsets.UTF_8), theme.mode)
             WebResourceResponse("text/html", "utf-8",
                 ByteArrayInputStream(styled.toByteArray(Charsets.UTF_8)))
         } else {
             WebResourceResponse(mime, null, ByteArrayInputStream(bytes))
         }
-    } catch (_: Exception) { emptyResponse(404, "Not found") }
+    } catch (_: Exception) {
+        emptyResponse(404, "Not found")
+    }
 }
 
 @Composable
@@ -338,14 +385,10 @@ private fun EpubReader(
     var goingForward by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
 
+    // Para diccionario
     var dictWord by remember { mutableStateOf<String?>(null) }
+    // Para subrayado
     var pendingHighlight by remember { mutableStateOf<String?>(null) }
-
-    // Highlights del capítulo actual para pintarlos en el WebView
-    val allHighlights by highlightDao.observeByBook(item.id).collectAsState(initial = emptyList())
-    val chapterHighlights = remember(allHighlights, index) {
-        allHighlights.filter { it.chapterIndex == index }
-    }
 
     LaunchedEffect(index) { onSave(index.toLong(), (index + 1) * 100 / pkg.spine.size) }
 
@@ -353,57 +396,85 @@ private fun EpubReader(
 
     Column(Modifier.fillMaxSize()) {
         if (isHorizontal) {
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            // Modo horizontal con animación
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {}
+                        ) { _, dragAmount ->
+                            if (dragAmount < -50 && index < pkg.spine.lastIndex) {
+                                goingForward = true; index++
+                            } else if (dragAmount > 50 && index > 0) {
+                                goingForward = false; index--
+                            }
+                        }
+                    }
+            ) {
                 PagedContent(state = index to themeMode, goingForward = goingForward,
                     modifier = Modifier.fillMaxSize()) {
-                    EpubWebView(pkg, theme, it.first, it.second, zoom, chapterHighlights,
+                    EpubWebView(pkg, theme, it.first, it.second, zoom,
                         onWordSelected = { w -> dictWord = w },
-                        onTextSelected = { t -> pendingHighlight = t },
-                        onChapterLink = { target -> goingForward = target > index; index = target },
-                        onSwipe = { forward ->
-                            if (forward && index < pkg.spine.lastIndex) { goingForward = true; index++ }
-                            else if (!forward && index > 0) { goingForward = false; index-- }
-                        })
+                        onTextSelected = { t -> pendingHighlight = t }
+                    )
                 }
             }
         } else {
-            EpubWebView(pkg, theme, index, themeMode, zoom, chapterHighlights,
+            // Modo vertical (scroll normal)
+            EpubWebView(
+                pkg, theme, index, themeMode, zoom,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 onWordSelected = { w -> dictWord = w },
-                onTextSelected = { t -> pendingHighlight = t },
-                onChapterLink = { target -> index = target },
-                onSwipe = null)
+                onTextSelected = { t -> pendingHighlight = t }
+            )
         }
 
         // Barra inferior
-        Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().background(Panel).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             TextButton(onClick = { if (index > 0) { goingForward = false; index-- } }) {
-                Text("‹", color = Gold, fontSize = 24.sp) }
+                Text("‹", color = Gold, fontSize = 24.sp)
+            }
             Text("${index + 1} / ${pkg.spine.size}", color = Muted, fontSize = 12.sp)
             TextButton(onClick = { if (index < pkg.spine.lastIndex) { goingForward = true; index++ } }) {
-                Text("›", color = Gold, fontSize = 24.sp) }
+                Text("›", color = Gold, fontSize = 24.sp)
+            }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = { zoom = (zoom - 10).coerceAtLeast(70) }) { Text("A−", color = Gold) }
             TextButton(onClick = { zoom = (zoom + 10).coerceAtMost(220) }) { Text("A+", color = Gold) }
-            TextButton(onClick = { themeMode = (themeMode + 1) % 3 }) { Text("◐", color = Gold, fontSize = 18.sp) }
+            TextButton(onClick = { themeMode = (themeMode + 1) % 3 }) {
+                Text("◐", color = Gold, fontSize = 18.sp)
+            }
         }
     }
 
-    dictWord?.let { DictionaryDialog(word = it, onDismiss = { dictWord = null }) }
+    // Diccionario
+    dictWord?.let { w ->
+        DictionaryDialog(word = w, onDismiss = { dictWord = null })
+    }
 
+    // Subrayado
     pendingHighlight?.let { text ->
         HighlightColorPicker(
             selectedText = text,
             onConfirm = { colorArgb, note ->
                 scope.launch {
-                    highlightDao.insert(Highlight(
-                        id = UUID.randomUUID().toString(),
-                        bookId = item.id, bookTitle = item.title,
-                        chapterIndex = index,
-                        chapterTitle = "Capítulo ${index + 1}",
-                        selectedText = text, note = note, colorArgb = colorArgb
-                    ))
+                    highlightDao.insert(
+                        Highlight(
+                            id = UUID.randomUUID().toString(),
+                            bookId = item.id,
+                            bookTitle = item.title,
+                            chapterIndex = index,
+                            chapterTitle = "Capítulo ${index + 1}",
+                            selectedText = text,
+                            note = note,
+                            colorArgb = colorArgb
+                        )
+                    )
                 }
                 pendingHighlight = null
             },
@@ -412,39 +483,6 @@ private fun EpubReader(
     }
 }
 
-private class SelectionBridge(
-    private val onWord: (String) -> Unit,
-    private val onText: (String) -> Unit
-) {
-    @JavascriptInterface
-    fun onSelected(text: String) {
-        val clean = text.trim()
-        if (clean.isEmpty()) return
-        Handler(Looper.getMainLooper()).post {
-            if (clean.split(Regex("\\s+")).size == 1) onWord(clean) else onText(clean)
-        }
-    }
-}
-
-private const val SELECTION_JS = """
-(function () {
-  if (window.__libraSel) return;
-  window.__libraSel = true;
-  var timer = null;
-  document.addEventListener('selectionchange', function () {
-    clearTimeout(timer);
-    timer = setTimeout(function () {
-      var sel = window.getSelection();
-      var t = sel ? sel.toString().trim() : '';
-      if (t.length > 1) {
-        LibraAndroid.onSelected(t);
-        sel.removeAllRanges();
-      }
-    }, 900);
-  });
-})();
-"""
-
 @Composable
 private fun EpubWebView(
     pkg: EpubPackage,
@@ -452,20 +490,10 @@ private fun EpubWebView(
     index: Int,
     themeMode: Int,
     zoom: Int,
-    chapterHighlights: List<Highlight>,
     modifier: Modifier = Modifier,
     onWordSelected: (String) -> Unit,
-    onTextSelected: (String) -> Unit,
-    onChapterLink: (Int) -> Unit,
-    onSwipe: ((Boolean) -> Unit)?
+    onTextSelected: (String) -> Unit
 ) {
-    val wordCb by rememberUpdatedState(onWordSelected)
-    val textCb by rememberUpdatedState(onTextSelected)
-    val linkCb by rememberUpdatedState(onChapterLink)
-    val swipeCb by rememberUpdatedState(onSwipe)
-    // Cuando cambian los highlights forzamos recarga
-    val hlKey = remember(chapterHighlights) { chapterHighlights.joinToString { it.id } }
-
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -474,55 +502,56 @@ private fun EpubWebView(
                 settings.javaScriptEnabled = true
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
-                addJavascriptInterface(
-                    SelectionBridge({ w -> wordCb(w) }, { t -> textCb(t) }),
-                    "LibraAndroid"
-                )
-                val detector = GestureDetector(ctx,
-                    object : GestureDetector.SimpleOnGestureListener() {
-                        override fun onFling(e1: MotionEvent?, e2: MotionEvent,
-                            velocityX: Float, velocityY: Float): Boolean {
-                            val start = e1 ?: return false
-                            val dx = e2.x - start.x; val dy = e2.y - start.y
-                            if (abs(dx) > 140f && abs(dx) > abs(dy) * 1.5f && abs(velocityX) > 400f)
-                                swipeCb?.invoke(dx < 0)
-                            return false
-                        }
-                    })
-                setOnTouchListener { _, event -> detector.onTouchEvent(event); false }
                 webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(view: WebView?,
-                        request: WebResourceRequest?): WebResourceResponse? {
+                    override fun shouldInterceptRequest(
+                        view: WebView?, request: WebResourceRequest?
+                    ): WebResourceResponse? {
                         val uri = request?.url ?: return null
-                        return serveEpub(pkg, theme, uri, chapterHighlights)
+                        return serveEpub(pkg, theme, uri)
                     }
-                    override fun shouldOverrideUrlLoading(view: WebView?,
-                        request: WebResourceRequest?): Boolean {
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?, request: WebResourceRequest?
+                    ): Boolean {
                         val uri = request?.url ?: return true
                         if (uri.host != EPUB_HOST) return true
-                        val path = uri.path?.removePrefix("/")
-                        val target = if (path != null) pkg.spine.indexOf(path) else -1
-                        if (target >= 0) {
-                            view?.tag = chapterUrl(pkg.spine[target]) + "|" + theme.mode
-                            linkCb(target)
-                        }
                         return false
                     }
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        view?.evaluateJavascript(SELECTION_JS, null)
-                    }
                 }
+                // JS para capturar selección de texto y enviarla vía título de página
+                addJavascriptInterface(object {
+                    @android.webkit.JavascriptInterface
+                    fun onTextSelected(text: String) {
+                        if (text.split(" ").size == 1) onWordSelected(text)
+                        else onTextSelected(text)
+                    }
+                }, "LibraAndroid")
             }
         },
         update = { wv ->
             theme.mode = themeMode
             wv.settings.textZoom = zoom
             val url = chapterUrl(pkg.spine[index])
-            // Incluimos hlKey en la clave para recargar cuando cambien highlights
-            val key = "$url|$themeMode|$hlKey"
+            val key = "$url|$themeMode"
             if (wv.tag != key) {
                 wv.tag = key
                 wv.loadUrl(url)
+                // Inyectar listener de selección tras cargar
+                wv.webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?, request: WebResourceRequest?
+                    ): WebResourceResponse? {
+                        val uri = request?.url ?: return null
+                        return serveEpub(pkg, theme, uri)
+                    }
+                    override fun onPageFinished(view: WebView?, url2: String?) {
+                        wv.evaluateJavascript("""
+                            document.addEventListener('selectionchange', function() {
+                                var t = window.getSelection().toString().trim();
+                                if (t.length > 1) LibraAndroid.onTextSelected(t);
+                            });
+                        """.trimIndent(), null)
+                    }
+                }
             }
         }
     )
@@ -551,13 +580,19 @@ private class PdfHolder(file: File) {
         }
     }
 
-    fun close() { runCatching { renderer.close() }; runCatching { pfd.close() } }
+    fun close() {
+        runCatching { renderer.close() }
+        runCatching { pfd.close() }
+    }
 }
 
 @Composable
 private fun PdfReader(
-    item: LibraryItem, onSave: (Long, Int) -> Unit, readingMode: String,
-    highlightDao: HighlightDao, onUpdateItem: (LibraryItem) -> Unit
+    item: LibraryItem,
+    onSave: (Long, Int) -> Unit,
+    readingMode: String,
+    highlightDao: HighlightDao,
+    onUpdateItem: (LibraryItem) -> Unit
 ) {
     val holder = remember(item.id) { runCatching { PdfHolder(File(item.localPath)) }.getOrNull() }
     DisposableEffect(holder) { onDispose { holder?.close() } }
@@ -566,7 +601,11 @@ private fun PdfReader(
         return
     }
 
+    val scope = rememberCoroutineScope()
+    var dictWord by remember { mutableStateOf<String?>(null) }
+
     if (readingMode == "HORIZONTAL") {
+        // Modo horizontal: una página a la vez con animación
         var index by remember(item.id) {
             mutableIntStateOf(item.lastPosition.toInt().coerceIn(0, holder.pageCount - 1))
         }
@@ -575,36 +614,59 @@ private fun PdfReader(
 
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val widthPx = constraints.maxWidth
+
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f).fillMaxWidth().pageSwipe(
-                    onNext = { if (index < holder.pageCount - 1) { goingForward = true; index++ } },
-                    onPrev = { if (index > 0) { goingForward = false; index-- } }
-                )) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectHorizontalDragGestures { _, dragAmount ->
+                                if (dragAmount < -60 && index < holder.pageCount - 1) {
+                                    goingForward = true; index++
+                                } else if (dragAmount > 60 && index > 0) {
+                                    goingForward = false; index--
+                                }
+                            }
+                        }
+                ) {
                     PagedContent(state = index, goingForward = goingForward,
                         modifier = Modifier.fillMaxSize()) { pg ->
                         val bitmap by produceState<Bitmap?>(null, pg, widthPx) {
                             value = try { holder.render(pg, widthPx) } catch (_: Exception) { null }
                         }
-                        bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth(), ContentScale.FillWidth) }
-                            ?: Box(Modifier.fillMaxSize().background(Panel))
+                        bitmap?.let {
+                            Image(
+                                bitmap = it.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxWidth(),
+                                contentScale = ContentScale.FillWidth
+                            )
+                        } ?: Box(Modifier.fillMaxSize().background(Panel))
                     }
                 }
-                Row(Modifier.fillMaxWidth().background(Panel).padding(4.dp),
+                Row(
+                    Modifier.fillMaxWidth().background(Panel).padding(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center) {
+                    horizontalArrangement = Arrangement.Center
+                ) {
                     TextButton(onClick = { if (index > 0) { goingForward = false; index-- } }) {
-                        Text("‹", color = Gold, fontSize = 24.sp) }
+                        Text("‹", color = Gold, fontSize = 24.sp)
+                    }
                     Text("${index + 1} / ${holder.pageCount}", color = Muted, fontSize = 12.sp)
                     TextButton(onClick = { if (index < holder.pageCount - 1) { goingForward = true; index++ } }) {
-                        Text("›", color = Gold, fontSize = 24.sp) }
+                        Text("›", color = Gold, fontSize = 24.sp)
+                    }
                 }
             }
         }
     } else {
+        // Modo vertical: scroll
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val widthPx = constraints.maxWidth
             val state = rememberLazyListState(
-                initialFirstVisibleItemIndex = item.lastPosition.toInt().coerceIn(0, holder.pageCount - 1))
+                initialFirstVisibleItemIndex = item.lastPosition.toInt().coerceIn(0, holder.pageCount - 1)
+            )
             LaunchedEffect(state) {
                 snapshotFlow { state.firstVisibleItemIndex }.collect {
                     onSave(it.toLong(), (it + 1) * 100 / holder.pageCount)
@@ -615,15 +677,21 @@ private fun PdfReader(
                     val bitmap by produceState<Bitmap?>(null, i, widthPx) {
                         value = try { holder.render(i, widthPx) } catch (_: Exception) { null }
                     }
-                    Column(Modifier.fillMaxWidth()) {
-                        bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth(), ContentScale.FillWidth) }
-                            ?: Box(Modifier.fillMaxWidth().aspectRatio(0.707f).background(Panel))
-                        Spacer(Modifier.height(6.dp))
-                    }
+                    bitmap?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.FillWidth
+                        )
+                    } ?: Box(Modifier.fillMaxWidth().aspectRatio(0.707f).background(Panel))
+                    Spacer(Modifier.height(6.dp))
                 }
             }
         }
     }
+
+    dictWord?.let { DictionaryDialog(word = it, onDismiss = { dictWord = null }) }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -632,8 +700,11 @@ private fun PdfReader(
 
 @Composable
 private fun TextFileReader(
-    item: LibraryItem, onSave: (Long, Int) -> Unit, fb2: Boolean,
-    highlightDao: HighlightDao, onUpdateItem: (LibraryItem) -> Unit
+    item: LibraryItem,
+    onSave: (Long, Int) -> Unit,
+    fb2: Boolean,
+    highlightDao: HighlightDao,
+    onUpdateItem: (LibraryItem) -> Unit
 ) {
     val loaded by produceState<List<String>?>(null, item.id) {
         value = withContext(Dispatchers.IO) {
@@ -653,40 +724,59 @@ private fun TextFileReader(
 
 @Composable
 private fun ParagraphList(
-    paragraphs: List<String>, item: LibraryItem,
-    onSave: (Long, Int) -> Unit, highlightDao: HighlightDao
+    paragraphs: List<String>,
+    item: LibraryItem,
+    onSave: (Long, Int) -> Unit,
+    highlightDao: HighlightDao
 ) {
     var fontSize by remember { mutableIntStateOf(17) }
     val state = rememberLazyListState(
-        initialFirstVisibleItemIndex = item.lastPosition.toInt().coerceIn(0, paragraphs.lastIndex))
+        initialFirstVisibleItemIndex = item.lastPosition.toInt().coerceIn(0, paragraphs.lastIndex)
+    )
     LaunchedEffect(state) {
         snapshotFlow { state.firstVisibleItemIndex }.collect {
             onSave(it.toLong(), (it + 1) * 100 / paragraphs.size)
         }
     }
+
     val scope = rememberCoroutineScope()
     var dictWord by remember { mutableStateOf<String?>(null) }
-    var pendingText by remember { mutableStateOf<Pair<String, Int>?>(null) }
-    val allHighlights by highlightDao.observeByBook(item.id).collectAsState(initial = emptyList())
+    var pendingText by remember { mutableStateOf<Pair<String, Int>?>(null) }  // text, parIdx
 
     Column(Modifier.fillMaxSize()) {
-        LazyColumn(state = state, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp)) {
+        LazyColumn(
+            state = state,
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp)
+        ) {
             items(paragraphs.size) { i ->
                 val p = paragraphs[i]
-                if (p.isBlank()) Spacer(Modifier.height(10.dp))
-                else SelectableText(text = p, fontSize = fontSize,
-                    highlight = allHighlights.firstOrNull { it.chapterIndex == i },
-                    onWordLongPress = { word -> dictWord = word },
-                    onTextSelected = { text -> pendingText = text to i })
+                if (p.isBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                } else {
+                    SelectableText(
+                        text = p,
+                        fontSize = fontSize,
+                        onWordLongPress = { word -> dictWord = word },
+                        onTextSelected = { text -> pendingText = text to i }
+                    )
+                }
             }
         }
-        Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Text("Párrafo ${state.firstVisibleItemIndex + 1} / ${paragraphs.size}",
-                color = Muted, fontSize = 12.sp)
+        Row(
+            Modifier.fillMaxWidth().background(Panel).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Párrafo ${state.firstVisibleItemIndex + 1} / ${paragraphs.size}",
+                color = Muted, fontSize = 12.sp
+            )
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(12) }) { Text("A−", color = Gold) }
-            TextButton(onClick = { fontSize = (fontSize + 1).coerceAtMost(34) }) { Text("A+", color = Gold) }
+            TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(12) }) {
+                Text("A−", color = Gold)
+            }
+            TextButton(onClick = { fontSize = (fontSize + 1).coerceAtMost(34) }) {
+                Text("A+", color = Gold)
+            }
         }
     }
 
@@ -697,12 +787,18 @@ private fun ParagraphList(
             selectedText = text,
             onConfirm = { colorArgb, note ->
                 scope.launch {
-                    highlightDao.insert(Highlight(
-                        id = UUID.randomUUID().toString(),
-                        bookId = item.id, bookTitle = item.title,
-                        chapterIndex = parIdx, chapterTitle = "Párrafo ${parIdx + 1}",
-                        selectedText = text, note = note, colorArgb = colorArgb
-                    ))
+                    highlightDao.insert(
+                        Highlight(
+                            id = UUID.randomUUID().toString(),
+                            bookId = item.id,
+                            bookTitle = item.title,
+                            chapterIndex = parIdx,
+                            chapterTitle = "Párrafo ${parIdx + 1}",
+                            selectedText = text,
+                            note = note,
+                            colorArgb = colorArgb
+                        )
+                    )
                 }
                 pendingText = null
             },
@@ -711,61 +807,58 @@ private fun ParagraphList(
     }
 }
 
+/** Texto seleccionable con callback al mantener pulsado */
 @Composable
 private fun SelectableText(
-    text: String, fontSize: Int,
-    highlight: Highlight?,
+    text: String,
+    fontSize: Int,
     onWordLongPress: (String) -> Unit,
     onTextSelected: (String) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    var askWord by remember { mutableStateOf(false) }
-    var wordInput by remember { mutableStateOf("") }
-
-    val bgColor = if (highlight != null)
-        Color(highlight.colorArgb).copy(alpha = 0.35f)
-    else Color.Transparent
+    var lastSelected by remember { mutableStateOf("") }
 
     Box(
-        Modifier.fillMaxWidth().padding(vertical = 5.dp)
-            .background(bgColor, RoundedCornerShape(4.dp))
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp)
             .pointerInput(Unit) {
-                detectTapGestures(onLongPress = { showMenu = true })
+                detectTapGestures(
+                    onLongPress = {
+                        // En texto plano, abrimos el picker con todo el párrafo
+                        lastSelected = text
+                        showMenu = true
+                    }
+                )
             }
     ) {
-        Text(text, color = Cream, fontSize = fontSize.sp, lineHeight = (fontSize * 1.55f).sp)
-    }
-
-    if (showMenu) {
-        AlertDialog(onDismissRequest = { showMenu = false }, containerColor = Panel,
-            title = { Text("Opciones de texto", color = Cream) },
-            text = {
-                Column {
-                    TextButton(onClick = { showMenu = false; wordInput = ""; askWord = true }) {
-                        Text("🔍 Buscar una palabra", color = Gold) }
-                    TextButton(onClick = { showMenu = false; onTextSelected(text) }) {
-                        Text("🖍️ Subrayar párrafo", color = Gold) }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showMenu = false }) { Text("Cancelar", color = Muted) } }
+        Text(
+            text, color = Cream,
+            fontSize = fontSize.sp,
+            lineHeight = (fontSize * 1.55f).sp
         )
     }
 
-    if (askWord) {
-        AlertDialog(onDismissRequest = { askWord = false }, containerColor = Panel,
-            title = { Text("¿Qué palabra buscas?", color = Cream) },
+    if (showMenu) {
+        AlertDialog(
+            onDismissRequest = { showMenu = false },
+            containerColor = Panel,
+            title = { Text("Opciones de texto", color = Cream) },
             text = {
-                OutlinedTextField(value = wordInput, onValueChange = { wordInput = it },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Cream, unfocusedTextColor = Cream,
-                        focusedBorderColor = Gold, unfocusedBorderColor = Muted))
+                Column {
+                    TextButton(onClick = {
+                        showMenu = false
+                        onWordLongPress(text.split(" ").firstOrNull() ?: "")
+                    }) { Text("🔍 Buscar en diccionario", color = Gold) }
+                    TextButton(onClick = {
+                        showMenu = false
+                        onTextSelected(text)
+                    }) { Text("🖍️ Subrayar párrafo", color = Gold) }
+                }
             },
             confirmButton = {
-                TextButton(onClick = { askWord = false; if (wordInput.isNotBlank()) onWordLongPress(wordInput.trim()) }) {
-                    Text("Buscar", color = Gold) }
-            },
-            dismissButton = { TextButton(onClick = { askWord = false }) { Text("Cancelar", color = Muted) } }
+                TextButton(onClick = { showMenu = false }) { Text("Cancelar", color = Muted) }
+            }
         )
     }
 }
@@ -775,7 +868,11 @@ private fun SelectableText(
 // ══════════════════════════════════════════════════════════════════════════════
 
 @Composable
-private fun CbzReader(item: LibraryItem, onSave: (Long, Int) -> Unit, readingMode: String) {
+private fun CbzReader(
+    item: LibraryItem,
+    onSave: (Long, Int) -> Unit,
+    readingMode: String
+) {
     val zip = remember(item.id) { runCatching { ZipFile(File(item.localPath)) }.getOrNull() }
     DisposableEffect(zip) { onDispose { runCatching { zip?.close() } } }
     if (zip == null) { Message("No se pudo abrir este CBZ."); return }
@@ -783,7 +880,8 @@ private fun CbzReader(item: LibraryItem, onSave: (Long, Int) -> Unit, readingMod
     val pages = remember(zip) {
         zip.entries().toList()
             .filter { !it.isDirectory && it.name.substringAfterLast('.').lowercase() in IMAGE_EXTENSIONS }
-            .sortedBy { naturalKey(it.name) }.map { it.name }
+            .sortedBy { naturalKey(it.name) }
+            .map { it.name }
     }
     if (pages.isEmpty()) { Message("Este CBZ no contiene imágenes."); return }
 
@@ -795,10 +893,17 @@ private fun CbzReader(item: LibraryItem, onSave: (Long, Int) -> Unit, readingMod
         LaunchedEffect(index) { onSave(index.toLong(), (index + 1) * 100 / pages.size) }
 
         Column(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxWidth().pageSwipe(
-                onNext = { if (index < pages.lastIndex) { goingForward = true; index++ } },
-                onPrev = { if (index > 0) { goingForward = false; index-- } }
-            )) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures { _, dragAmount ->
+                            if (dragAmount < -60 && index < pages.lastIndex) { goingForward = true; index++ }
+                            else if (dragAmount > 60 && index > 0) { goingForward = false; index-- }
+                        }
+                    }
+            ) {
                 PagedContent(state = index, goingForward = goingForward,
                     modifier = Modifier.fillMaxSize()) { pg ->
                     val bitmap by produceState<Bitmap?>(null, pages[pg]) {
@@ -810,24 +915,36 @@ private fun CbzReader(item: LibraryItem, onSave: (Long, Int) -> Unit, readingMod
                             } catch (_: Exception) { null }
                         }
                     }
-                    bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth(), ContentScale.FillWidth) }
-                        ?: Box(Modifier.fillMaxSize().background(Panel))
+                    bitmap?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.FillWidth
+                        )
+                    } ?: Box(Modifier.fillMaxSize().background(Panel))
                 }
             }
-            Row(Modifier.fillMaxWidth().background(Panel).padding(4.dp),
-                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().background(Panel).padding(4.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 TextButton(onClick = { if (index > 0) { goingForward = false; index-- } }) {
-                    Text("‹", color = Gold, fontSize = 24.sp) }
+                    Text("‹", color = Gold, fontSize = 24.sp)
+                }
                 Text("${index + 1} / ${pages.size}", color = Muted, fontSize = 12.sp)
                 TextButton(onClick = { if (index < pages.lastIndex) { goingForward = true; index++ } }) {
-                    Text("›", color = Gold, fontSize = 24.sp) }
+                    Text("›", color = Gold, fontSize = 24.sp)
+                }
             }
         }
     } else {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val widthPx = constraints.maxWidth
             val state = rememberLazyListState(
-                initialFirstVisibleItemIndex = item.lastPosition.toInt().coerceIn(0, pages.lastIndex))
+                initialFirstVisibleItemIndex = item.lastPosition.toInt().coerceIn(0, pages.lastIndex)
+            )
             LaunchedEffect(state) {
                 snapshotFlow { state.firstVisibleItemIndex }.collect {
                     onSave(it.toLong(), (it + 1) * 100 / pages.size)
@@ -844,8 +961,14 @@ private fun CbzReader(item: LibraryItem, onSave: (Long, Int) -> Unit, readingMod
                             } catch (_: Exception) { null }
                         }
                     }
-                    bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth(), ContentScale.FillWidth) }
-                        ?: Box(Modifier.fillMaxWidth().aspectRatio(0.7f).background(Panel))
+                    bitmap?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.FillWidth
+                        )
+                    } ?: Box(Modifier.fillMaxWidth().aspectRatio(0.7f).background(Panel))
                 }
             }
         }
