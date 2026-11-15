@@ -24,9 +24,9 @@ jobs:
           gradle-version: '8.10.2'
 
       - name: Compilar
-        run: gradle -p LibraAndroid assembleDebug --stacktrace
-
+        run: gradle -p LibraAndroid/LibraAndroid assembleDebug --stacktrace
+        
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: LibraAndroid/app/build/outputs/apk/debug/*.apk
+          path: LibraAndroid/LibraAndroid/app/build/outputs/apk/debug/*.apk
