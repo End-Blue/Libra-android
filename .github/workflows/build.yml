@@ -1,1 +1,65 @@
+name: Construir APK Libellum
 
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '*.zip'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Localizar y descomprimir el proyecto
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          if [[ -z "$ZIP_FILE" ]]; then
+            echo "ERROR: No se encontró ningún archivo ZIP en la raíz del repositorio."
+            echo "Archivos disponibles:"
+            ls -la
+            exit 1
+          fi
+          echo "ZIP encontrado: $ZIP_FILE"
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+          PROJECT_DIR="$(find extracted -type f -name settings.gradle.kts -print -quit | xargs -r dirname)"
+          if [[ -z "$PROJECT_DIR" ]]; then
+            echo "ERROR: El ZIP no contiene un proyecto Gradle con settings.gradle.kts."
+            find extracted -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+          echo "Proyecto Android encontrado en: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Configurar Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar APK
+        run: gradle -p "$PROJECT_DIR" --no-daemon assembleDebug
+
+      - name: Subir APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Libellum-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
