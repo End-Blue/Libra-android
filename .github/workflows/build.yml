@@ -24,7 +24,8 @@ jobs:
           echo "== Contenido de la raíz =="
           ls -la
 
-          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' ! -name '.*' -print | head -n 1 || true)"
+          # Toma el ZIP más reciente de la raíz
+          ZIP_FILE="$(ls -t ./*.zip 2>/dev/null | head -n 1 || true)"
           if [[ -z "${ZIP_FILE}" ]]; then
             echo "ERROR: No hay ningún .zip en la raíz del repositorio."
             exit 1
@@ -34,9 +35,6 @@ jobs:
           rm -rf extracted
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
-
-          echo "== Árbol (4 niveles) =="
-          find extracted -maxdepth 4 -type f | head -80
 
           PROJECT_DIR="$(find extracted -type f \( -name settings.gradle.kts -o -name settings.gradle \) -print | head -n 1 | xargs -r dirname)"
           if [[ -z "${PROJECT_DIR}" ]]; then
@@ -58,13 +56,16 @@ jobs:
 
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Evita que intente instalar el paquete 'tools' (ya no existe)
+          packages: ''
 
       - name: Instalar platform 35 y build-tools
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
           yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/platforms" || true
           ls "$ANDROID_HOME/build-tools" || true
@@ -79,9 +80,8 @@ jobs:
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          # Memoria para AGP + KSP + Compose
-          mkdir -p \~/.gradle
-          cat >> \~/.gradle/gradle.properties <<'EOF'
+          mkdir -p "$HOME/.gradle"
+          cat >> "$HOME/.gradle/gradle.properties" <<'EOF'
           org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
           android.useAndroidX=true
           EOF
@@ -92,7 +92,6 @@ jobs:
         run: |
           set -euo pipefail
           find "$PROJECT_DIR" -path '*/outputs/apk/debug/*.apk' -print
-          find "$PROJECT_DIR/app/build/outputs" -type f 2>/dev/null | head -50 || true
 
       - name: Subir APK
         uses: actions/upload-artifact@v4
